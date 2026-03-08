@@ -2,108 +2,85 @@ import os
 import requests
 import datetime
 
-# ============= НАСТРОЙКИ =============
 MWS_TOKEN = os.environ.get('MWS_TOKEN')
-TABLE_ID = "dstWj25HjQqwT4jmdC"      # ID таблицы
-VIEW_ID = "viw3UUhw6Xy2w"             # ID представления
-# ======================================
+TABLE_ID = "dstWj25HjQqwT4jmdC"
+VIEW_ID = "viw3UUhw6Xy2w"
 
-API_URL = "https://tables.mws.ru/fusion/v1"
+# Все возможные базовые URL
+base_urls = [
+    "https://tables.mws.ru/fusion/v1",
+    "https://tables.mws.ru/fusion/v2",
+    "https://tables.mws.ru/api/v1",
+    "https://tables.mws.ru/api/v2",
+    "https://tables.mws.ru/rest/v1",
+    "https://tables.mws.ru/rest/v2",
+    "https://api.tables.mws.ru/v1",
+    "https://api.tables.mws.ru/v2",
+]
 
-def get_pro_matches():
-    """Получает последние профессиональные матчи"""
-    url = "https://api.opendota.com/api/proMatches"
-    try:
-        response = requests.get(url)
-        response.raise_for_status()
-        return response.json()
-    except Exception as e:
-        print(f"❌ Ошибка OpenDota: {e}")
-        return []
+# Все возможные пути для создания записи
+paths = [
+    f"/datasets/{TABLE_ID}/records",
+    f"/datasets/{TABLE_ID}/rows",
+    f"/tables/{TABLE_ID}/records",
+    f"/tables/{TABLE_ID}/rows",
+    f"/bases/{TABLE_ID}/records",
+    f"/bases/{TABLE_ID}/rows",
+]
 
-def create_record(match):
-    """Создаёт запись в формате MWS Tables"""
-    
-    # Проверка мегакрипов
-    had_megacreeps = (match.get('barracks_status_radiant') == 0 or 
-                     match.get('barracks_status_dire') == 0)
-    
-    # Длительность
-    duration_seconds = match.get('duration', 0)
-    duration_min = duration_seconds // 60
-    duration_sec = duration_seconds % 60
-    
-    # Дата
-    start_time = match.get('start_time')
-    if start_time:
-        match_date = datetime.datetime.fromtimestamp(start_time).strftime('%Y-%m-%d %H:%M')
-    else:
-        match_date = ''
-    
-    # Формируем запись с полями (как в примерах на GitHub)
-    return {
-        "fields": {
-            "match_id": str(match.get('match_id', '')),
-            "radiant_team": match.get('radiant_name') or 'Unknown',
-            "dire_team": match.get('dire_name') or 'Unknown',
-            "winner": 'Radiant' if match.get('radiant_win') else 'Dire',
-            "duration": f"{duration_min}:{duration_sec:02d}",
-            "score": f"{match.get('radiant_score', 0)} - {match.get('dire_score', 0)}",
-            "league": match.get('league_name') or 'No League',
-            "had_megacreeps": 'Yes' if had_megacreeps else 'No',
-            "match_date": match_date
+# Тестовые данные (один матч)
+test_record = {
+    "fields": {
+        "match_id": "12345",
+        "radiant_team": "Test Team",
+        "dire_team": "Test Team 2",
+        "winner": "Radiant",
+        "duration": "45:00",
+        "score": "30-25",
+        "league": "Test League",
+        "had_megacreeps": "No",
+        "match_date": "2024-03-08 15:00"
+    }
+}
+
+print("🔍 ПОИСК РАБОЧЕГО API ENDPOINT")
+print("=" * 60)
+
+found = False
+for base_url in base_urls:
+    for path in paths:
+        url = base_url + path
+        params = {'viewId': VIEW_ID}
+        headers = {
+            'Authorization': f'Bearer {MWS_TOKEN}',
+            'Content-Type': 'application/json'
         }
-    }
-
-def send_to_mws(record):
-    """Отправляет запись в MWS Tables"""
-    
-    headers = {
-        'Authorization': f'Bearer {MWS_TOKEN}',
-        'Content-Type': 'application/json'
-    }
-    
-    # Эндпоинт для создания записи
-    url = f"{API_URL}/datasets/{TABLE_ID}/records"
-    params = {'viewId': VIEW_ID}
-    
-    try:
-        response = requests.post(url, headers=headers, params=params, json=record)
         
-        if response.status_code in [200, 201]:
-            print(f"✅ Запись успешно добавлена!")
-            return True
-        else:
-            print(f"❌ Ошибка {response.status_code}")
-            print(f"Ответ: {response.text[:200]}")
-            return False
+        print(f"\n➡️ Пробуем: {url}")
+        print(f"Параметры: {params}")
+        
+        try:
+            response = requests.post(url, headers=headers, params=params, json=test_record, timeout=10)
+            print(f"Статус: {response.status_code}")
             
-    except Exception as e:
-        print(f"❌ Исключение: {e}")
-        return False
+            if response.status_code in [200, 201]:
+                print(f"✅ УСПЕХ! Найден рабочий endpoint!")
+                print(f"URL: {url}")
+                print(f"Ответ: {response.text[:200]}")
+                found = True
+                break
+            elif response.status_code == 401:
+                print(f"🔐 401 Unauthorized - проблема с токеном")
+            elif response.status_code == 404:
+                print(f"❌ 404 Not Found - путь не существует")
+            else:
+                print(f"⚠️ Код {response.status_code}: {response.text[:100]}")
+        except Exception as e:
+            print(f"💥 Ошибка соединения: {e}")
+    
+    if found:
+        break
 
-def main():
-    print(f"🚀 Запуск: {datetime.datetime.now()}")
-    
-    matches = get_pro_matches()
-    if not matches:
-        return
-    
-    print(f"📊 Получено {len(matches)} матчей")
-    
-    # Берём 1 матч для теста
-    match = matches[0]
-    print(f"⚙️ Обрабатываю матч {match.get('match_id')}")
-    
-    record = create_record(match)
-    print(f"📝 Запись подготовлена")
-    
-    success = send_to_mws(record)
-    
-    if success:
-        print("✅ Готово! Проверь таблицу")
-    else:
-        print("❌ Что-то пошло не так")
-
-if __name__ == "__main__":
-    main()
+if not found:
+    print("\n❌ НИ ОДИН ENDPOINT НЕ СРАБОТАЛ")
+    print("Нужна дополнительная информация из документации MWS Tables")

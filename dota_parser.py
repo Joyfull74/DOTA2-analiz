@@ -2,73 +2,51 @@ import os
 import requests
 
 MWS_TOKEN = os.environ.get('MWS_TOKEN')
-DATASET_ID = "dstWj25HjQqwT4jmDC"
 VIEW_ID = "viw3UUhw6Xy2w"
 
-# Все возможные базовые URL
-base_urls = [
-    "https://tables.mws.ru/api",
-    "https://tables.mws.ru/api/v1",
-    "https://tables.mws.ru/rest",
-    "https://tables.mws.ru/rest/v1",
-    "https://tables.mws.ru/v1",
-    "https://tables.mws.ru/fusion/api",
-    "https://tables.mws.ru/fusion/rest",
-    "https://api.tables.mws.ru",
-    "https://api.tables.mws.ru/v1",
+# Все возможные ID, которые мы видели
+possible_ids = [
+    "dstWj25HjQqwT4jmDC",     # из документации
+    "shrdTUtqSMEl2S5URWuR7",  # из ссылки поделиться
+    "viw3UUhw6Xy2w",          # view ID
+    "fldkN4EjwFeEP",          # field ID
+    "dstWj25HjQqwT4jmDC",     # ещё раз для проверки
 ]
 
-# Все возможные пути
-paths = [
-    f"/datasets/{DATASET_ID}/records",
-    f"/tables/{DATASET_ID}/rows",
-    f"/bases/{DATASET_ID}/records",
-    f"/records/{DATASET_ID}",
-]
-
+base_url = "https://tables.mws.ru/api/v1"
 headers = {
     'Authorization': f'Bearer {MWS_TOKEN}',
     'Content-Type': 'application/json'
 }
 
-# Тестовые данные
-test_data = {"records": [{"fields": {"fldkN4EjwFeEP": "test"}}]}
-
-print("🔍 ПОИСК РАБОЧЕГО API ENDPOINT")
+print("🔍 ПОИСК ПРАВИЛЬНОГО ID ДАТАСЕТА")
 print("=" * 60)
 
-found = False
-for base in base_urls:
-    for path in paths:
-        url = base + path
-        full_url = f"{url}?viewId={VIEW_ID}&fieldKey=id"
-        
-        try:
-            print(f"➡️ Пробуем: {full_url}")
-            response = requests.post(full_url, headers=headers, json=test_data, timeout=5)
-            
-            if response.status_code == 200:
-                print(f"✅ НАЙДЕН! 200 OK: {full_url}")
-                print(f"Ответ: {response.text[:200]}")
-                found = True
-                break
-            elif response.status_code == 201:
-                print(f"✅ НАЙДЕН! 201 Created: {full_url}")
-                print(f"Ответ: {response.text[:200]}")
-                found = True
-                break
-            elif response.status_code == 401:
-                print(f"🔐 401 Unauthorized (токен не подходит): {full_url}")
-            elif response.status_code == 404:
-                print(f"❌ 404 Not Found: {full_url}")
-            else:
-                print(f"⚠️ {response.status_code}: {full_url}")
-        except Exception as e:
-            print(f"💥 Ошибка соединения: {full_url} - {e}")
+for dataset_id in possible_ids:
+    url = f"{base_url}/datasets/{dataset_id}/records"
+    params = {'viewId': VIEW_ID, 'fieldKey': 'id'}
     
-    if found:
-        break
+    print(f"\n➡️ Пробуем ID: {dataset_id}")
+    print(f"URL: {url}")
+    
+    try:
+        response = requests.get(url, headers=headers, params=params)
+        print(f"Статус: {response.status_code}")
+        
+        if response.status_code == 200:
+            data = response.json()
+            print(f"Ответ: {data}")
+            
+            # Проверяем, есть ли данные
+            if data.get('success') == True or 'data' in data:
+                print(f"✅ ЭТОТ ID РАБОТАЕТ! {dataset_id}")
+                break
+            elif data.get('code') == 203:
+                print("❌ Ресурс не существует")
+        else:
+            print(f"❌ Ошибка {response.status_code}")
+            
+    except Exception as e:
+        print(f"💥 Ошибка: {e}")
 
-if not found:
-    print("\n❌ НИЧЕГО НЕ НАЙДЕНО")
-    print("Нужно смотреть реальные запросы в браузере (F12 → Network)")
+print("\n✅ Поиск завершён")

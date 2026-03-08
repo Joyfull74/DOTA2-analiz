@@ -4,21 +4,10 @@ import requests
 import datetime
 import json
 
-# ============= НАСТРОЙКИ =============
 MWS_TOKEN = os.environ.get('MWS_TOKEN')
+TABLE_ID = "dstWj25HjQqwT4jmdC"
 VIEW_ID = "viw3UUhw6Xy2w"
-# ======================================
-
 API_URL = "https://tables.mws.ru/api/v1"
-
-# Все возможные ID таблицы
-TABLE_IDS = [
-    "dstWj25HjQqwT4jmdC",  # из основного URL
-    "viw3UUhw6Xy2w",       # ID представления
-    "shrdTUtqSMEl2S5URWuR7", # из ссылки поделиться
-    "recul0FclA6MW",       # ID конкретной записи
-    "fldkN4EjwFeEP",       # Field ID
-]
 
 print = lambda *args, **kwargs: __import__('builtins').print(*args, **kwargs, flush=True)
 
@@ -58,32 +47,60 @@ def create_record_payload(match):
         "match_date": match_date
     }
 
-def send_to_mws(record, match_id, table_id):
+def send_to_mws(record, match_id):
     headers = {
         'Authorization': f'Bearer {MWS_TOKEN}',
         'Content-Type': 'application/json'
     }
     
-    url = f"{API_URL}/datasets/{table_id}/records"
+    # Пробуем разные варианты
+    variants = [
+        {
+            'name': 'datasets + один объект',
+            'url': f"{API_URL}/datasets/{TABLE_ID}/records",
+            'data': record
+        },
+        {
+            'name': 'tables + один объект',
+            'url': f"{API_URL}/tables/{TABLE_ID}/records",
+            'data': record
+        },
+        {
+            'name': 'datasets + массив',
+            'url': f"{API_URL}/datasets/{TABLE_ID}/records",
+            'data': [record]
+        },
+        {
+            'name': 'tables + массив',
+            'url': f"{API_URL}/tables/{TABLE_ID}/records",
+            'data': [record]
+        }
+    ]
+    
     params = {'viewId': VIEW_ID}
     
-    print(f"\n📤 Отправка матча {match_id} в таблицу {table_id}...")
-    
-    try:
-        response = requests.post(url, headers=headers, params=params, json=record)
-        print(f"📥 Статус ответа: {response.status_code}")
-        print(f"📥 Тело ответа: {response.text}")
+    for variant in variants:
+        print(f"\n📤 Пробуем: {variant['name']}")
+        print(f"URL: {variant['url']}")
         
-        if response.status_code in [200, 201]:
-            return True
-        return False
-    except Exception as e:
-        print(f"❌ Ошибка: {e}")
-        return False
+        try:
+            response = requests.post(variant['url'], headers=headers, params=params, json=variant['data'])
+            print(f"📥 Статус: {response.status_code}")
+            print(f"📥 Ответ: {response.text}")
+            
+            if response.status_code in [200, 201]:
+                # Проверяем, действительно ли данные добавились
+                if 'success' in response.text and 'true' in response.text.lower():
+                    print(f"✅ УСПЕХ с вариантом: {variant['name']}")
+                    return True
+        except Exception as e:
+            print(f"❌ Ошибка: {e}")
+    
+    return False
 
 def main():
     print("=" * 50)
-    print("🚀 ПОИСК РАБОЧЕГО ID ТАБЛИЦЫ")
+    print("🚀 ФИНАЛЬНОЕ ТЕСТИРОВАНИЕ")
     print("=" * 50)
     
     matches = get_pro_matches()
@@ -92,16 +109,14 @@ def main():
     
     match = matches[0]
     record = create_record_payload(match)
+    print(f"\n⚙️ Тестовый матч: {match.get('match_id')}")
     
-    for table_id in TABLE_IDS:
-        print(f"\n{'='*30}")
-        print(f"🔍 Пробуем ID: {table_id}")
-        success = send_to_mws(record, match.get('match_id'), table_id)
-        if success:
-            print(f"✅ НАЙДЕН РАБОЧИЙ ID: {table_id}")
-            break
+    success = send_to_mws(record, match.get('match_id'))
     
-    print("\n✅ Поиск завершён")
+    if success:
+        print("\n✅ РАБОТАЕТ! Проверь таблицу!")
+    else:
+        print("\n❌ Ни один вариант не сработал")
 
 if __name__ == "__main__":
     main()

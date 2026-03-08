@@ -1,52 +1,109 @@
 import os
 import requests
+import datetime
 
+# ============= НАСТРОЙКИ =============
 MWS_TOKEN = os.environ.get('MWS_TOKEN')
-VIEW_ID = "viw3UUhw6Xy2w"
+TABLE_ID = "dstWj25HjQqwT4jmdC"      # ID таблицы
+VIEW_ID = "viw3UUhw6Xy2w"             # ID представления
+# ======================================
 
-# Все возможные ID, которые мы видели
-possible_ids = [
-    "dstWj25HjQqwT4jmDC",     # из документации
-    "shrdTUtqSMEl2S5URWuR7",  # из ссылки поделиться
-    "viw3UUhw6Xy2w",          # view ID
-    "fldkN4EjwFeEP",          # field ID
-    "dstWj25HjQqwT4jmDC",     # ещё раз для проверки
-]
+API_URL = "https://tables.mws.ru/fusion/v1"
 
-base_url = "https://tables.mws.ru/api/v1"
-headers = {
-    'Authorization': f'Bearer {MWS_TOKEN}',
-    'Content-Type': 'application/json'
-}
+def get_pro_matches():
+    """Получает последние профессиональные матчи"""
+    url = "https://api.opendota.com/api/proMatches"
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+        return response.json()
+    except Exception as e:
+        print(f"❌ Ошибка OpenDota: {e}")
+        return []
 
-print("🔍 ПОИСК ПРАВИЛЬНОГО ID ДАТАСЕТА")
-print("=" * 60)
-
-for dataset_id in possible_ids:
-    url = f"{base_url}/datasets/{dataset_id}/records"
-    params = {'viewId': VIEW_ID, 'fieldKey': 'id'}
+def create_record(match):
+    """Создаёт запись в формате MWS Tables"""
     
-    print(f"\n➡️ Пробуем ID: {dataset_id}")
-    print(f"URL: {url}")
+    # Проверка мегакрипов
+    had_megacreeps = (match.get('barracks_status_radiant') == 0 or 
+                     match.get('barracks_status_dire') == 0)
+    
+    # Длительность
+    duration_seconds = match.get('duration', 0)
+    duration_min = duration_seconds // 60
+    duration_sec = duration_seconds % 60
+    
+    # Дата
+    start_time = match.get('start_time')
+    if start_time:
+        match_date = datetime.datetime.fromtimestamp(start_time).strftime('%Y-%m-%d %H:%M')
+    else:
+        match_date = ''
+    
+    # Формируем запись с полями (как в примерах на GitHub)
+    return {
+        "fields": {
+            "match_id": str(match.get('match_id', '')),
+            "radiant_team": match.get('radiant_name') or 'Unknown',
+            "dire_team": match.get('dire_name') or 'Unknown',
+            "winner": 'Radiant' if match.get('radiant_win') else 'Dire',
+            "duration": f"{duration_min}:{duration_sec:02d}",
+            "score": f"{match.get('radiant_score', 0)} - {match.get('dire_score', 0)}",
+            "league": match.get('league_name') or 'No League',
+            "had_megacreeps": 'Yes' if had_megacreeps else 'No',
+            "match_date": match_date
+        }
+    }
+
+def send_to_mws(record):
+    """Отправляет запись в MWS Tables"""
+    
+    headers = {
+        'Authorization': f'Bearer {MWS_TOKEN}',
+        'Content-Type': 'application/json'
+    }
+    
+    # Эндпоинт для создания записи
+    url = f"{API_URL}/datasets/{TABLE_ID}/records"
+    params = {'viewId': VIEW_ID}
     
     try:
-        response = requests.get(url, headers=headers, params=params)
-        print(f"Статус: {response.status_code}")
+        response = requests.post(url, headers=headers, params=params, json=record)
         
-        if response.status_code == 200:
-            data = response.json()
-            print(f"Ответ: {data}")
-            
-            # Проверяем, есть ли данные
-            if data.get('success') == True or 'data' in data:
-                print(f"✅ ЭТОТ ID РАБОТАЕТ! {dataset_id}")
-                break
-            elif data.get('code') == 203:
-                print("❌ Ресурс не существует")
+        if response.status_code in [200, 201]:
+            print(f"✅ Запись успешно добавлена!")
+            return True
         else:
             print(f"❌ Ошибка {response.status_code}")
+            print(f"Ответ: {response.text[:200]}")
+            return False
             
     except Exception as e:
-        print(f"💥 Ошибка: {e}")
+        print(f"❌ Исключение: {e}")
+        return False
 
-print("\n✅ Поиск завершён")
+def main():
+    print(f"🚀 Запуск: {datetime.datetime.now()}")
+    
+    matches = get_pro_matches()
+    if not matches:
+        return
+    
+    print(f"📊 Получено {len(matches)} матчей")
+    
+    # Берём 1 матч для теста
+    match = matches[0]
+    print(f"⚙️ Обрабатываю матч {match.get('match_id')}")
+    
+    record = create_record(match)
+    print(f"📝 Запись подготовлена")
+    
+    success = send_to_mws(record)
+    
+    if success:
+        print("✅ Готово! Проверь таблицу")
+    else:
+        print("❌ Что-то пошло не так")
+
+if __name__ == "__main__":
+    main()

@@ -1,14 +1,67 @@
 import os
 import requests
 import datetime
+import json
 
 # ============= НАСТРОЙКИ =============
 MWS_TOKEN = os.environ.get('MWS_TOKEN')
 MWS_TABLE_ID = os.environ.get('MWS_TABLE_ID')
 # ======================================
 
-# API endpoint для MWS Tables (уточни в документации!)
 MWS_API_URL = "https://tables.mws.ru/api/v1"
+
+def debug_print(title, data):
+    """Печатает отладочную информацию"""
+    print(f"\n🔍 {title}:")
+    print(json.dumps(data, indent=2, ensure_ascii=False)[:500])
+
+def test_mws_api():
+    """Тестирует API и выводит информацию"""
+    print("\n🧪 ТЕСТИРОВАНИЕ API MWS TABLES")
+    
+    headers = {'Authorization': f'Bearer {MWS_TOKEN}'}
+    
+    # Тест 1: Получить информацию о таблице
+    print("\n1️⃣ Пробуем получить информацию о таблице...")
+    urls = [
+        f"{MWS_API_URL}/tables/{MWS_TABLE_ID}",
+        f"{MWS_API_URL}/bases/{MWS_TABLE_ID}",
+        f"{MWS_API_URL}/tables/{MWS_TABLE_ID}/info",
+        f"{MWS_API_URL}/bases/{MWS_TABLE_ID}/info"
+    ]
+    
+    for url in urls:
+        try:
+            response = requests.get(url, headers=headers)
+            print(f"   URL: {url}")
+            print(f"   Статус: {response.status_code}")
+            if response.status_code == 200:
+                debug_print("Ответ от API", response.json())
+                return response.json()
+        except Exception as e:
+            print(f"   Ошибка: {e}")
+    
+    # Тест 2: Получить структуру таблицы
+    print("\n2️⃣ Пробуем получить структуру таблицы...")
+    urls = [
+        f"{MWS_API_URL}/tables/{MWS_TABLE_ID}/schema",
+        f"{MWS_API_URL}/bases/{MWS_TABLE_ID}/schema",
+        f"{MWS_API_URL}/tables/{MWS_TABLE_ID}/fields",
+        f"{MWS_API_URL}/bases/{MWS_TABLE_ID}/fields"
+    ]
+    
+    for url in urls:
+        try:
+            response = requests.get(url, headers=headers)
+            print(f"   URL: {url}")
+            print(f"   Статус: {response.status_code}")
+            if response.status_code == 200:
+                debug_print("Ответ от API", response.json())
+                return response.json()
+        except Exception as e:
+            print(f"   Ошибка: {e}")
+    
+    return None
 
 def get_pro_matches():
     """Получает последние профессиональные матчи через OpenDota API"""
@@ -49,140 +102,99 @@ def process_match(match):
         'match_date': match_date,
     }
 
-def get_existing_match_ids():
-    """Получает существующие match_id из MWS Tables"""
-    if not all([MWS_TOKEN, MWS_TABLE_ID]):
-        return []
-    
-    headers = {'Authorization': f'Bearer {MWS_TOKEN}'}
-    
-    # Пробуем разные возможные endpoint'ы
-    possible_urls = [
-        f"{MWS_API_URL}/tables/{MWS_TABLE_ID}/rows",
-        f"{MWS_API_URL}/bases/{MWS_TABLE_ID}/rows",
-        f"{MWS_API_URL}/tables/{MWS_TABLE_ID}/records"
-    ]
-    
-    for url in possible_urls:
-        try:
-            response = requests.get(url, headers=headers)
-            if response.status_code == 200:
-                data = response.json()
-                existing_ids = []
-                
-                # Пробуем разные форматы ответа
-                if isinstance(data, list):
-                    for row in data:
-                        if isinstance(row, dict) and 'match_id' in row:
-                            existing_ids.append(str(row['match_id']))
-                elif isinstance(data, dict) and 'rows' in data:
-                    for row in data['rows']:
-                        if 'match_id' in row:
-                            existing_ids.append(str(row['match_id']))
-                elif isinstance(data, dict) and 'data' in data:
-                    for row in data['data']:
-                        if 'match_id' in row:
-                            existing_ids.append(str(row['match_id']))
-                
-                print(f"📋 Найдено {len(existing_ids)} существующих матчей")
-                return existing_ids
-        except:
-            continue
-    
-    print("⚠️ Не удалось получить существующие матчи, продолжаем без проверки дубликатов")
-    return []
-
-def append_to_mws_tables(matches):
-    """Добавляет новые матчи в MWS Tables"""
-    if not all([MWS_TOKEN, MWS_TABLE_ID]):
-        print("⚠️ MWS Tables не настроены, пропускаю сохранение")
-        return
-    
-    existing_ids = get_existing_match_ids()
-    new_matches = [m for m in matches if str(m['match_id']) not in existing_ids]
-    
-    if not new_matches:
-        print("📭 Новых матчей нет")
-        return
+def test_add_record():
+    """Пробует добавить тестовую запись разными способами"""
+    print("\n🧪 ТЕСТИРОВАНИЕ ДОБАВЛЕНИЯ ЗАПИСИ")
     
     headers = {
         'Authorization': f'Bearer {MWS_TOKEN}',
         'Content-Type': 'application/json'
     }
     
-    # Пробуем разные форматы отправки данных
-    urls_and_formats = [
+    test_data = {
+        'match_id': 'TEST123',
+        'radiant_team': 'Test Team',
+        'dire_team': 'Test Team 2',
+        'winner': 'Radiant',
+        'duration': '45:00',
+        'score': '30-25',
+        'league': 'Test League',
+        'had_megacreeps': 'No',
+        'match_date': '2024-03-08 15:00'
+    }
+    
+    # Пробуем разные форматы и URL
+    test_cases = [
         {
+            'name': 'Объект напрямую',
             'url': f"{MWS_API_URL}/tables/{MWS_TABLE_ID}/rows",
-            'format': 'list'
+            'data': test_data
         },
         {
+            'name': 'Массив с одним объектом',
+            'url': f"{MWS_API_URL}/tables/{MWS_TABLE_ID}/rows",
+            'data': [test_data]
+        },
+        {
+            'name': 'Список значений',
+            'url': f"{MWS_API_URL}/tables/{MWS_TABLE_ID}/rows",
+            'data': list(test_data.values())
+        },
+        {
+            'name': 'С полем records',
+            'url': f"{MWS_API_URL}/tables/{MWS_TABLE_ID}/rows",
+            'data': {'records': [test_data]}
+        },
+        {
+            'name': 'С полем data',
+            'url': f"{MWS_API_URL}/tables/{MWS_TABLE_ID}/rows",
+            'data': {'data': [test_data]}
+        },
+        {
+            'name': 'Пробуем другой endpoint',
             'url': f"{MWS_API_URL}/bases/{MWS_TABLE_ID}/rows",
-            'format': 'list'
+            'data': test_data
         },
         {
-            'url': f"{MWS_API_URL}/tables/{MWS_TABLE_ID}/records",
-            'format': 'records'
-        },
-        {
+            'name': 'Пробуем batch endpoint',
             'url': f"{MWS_API_URL}/tables/{MWS_TABLE_ID}/rows/batch",
-            'format': 'batch'
+            'data': [test_data]
         }
     ]
     
-    for match in new_matches:
-        for attempt in urls_and_formats:
-            try:
-                if attempt['format'] == 'list':
-                    # Простой список значений в правильном порядке
-                    payload = [
-                        match['match_id'],
-                        match['radiant_team'],
-                        match['dire_team'],
-                        match['winner'],
-                        match['duration'],
-                        match['score'],
-                        match['league'],
-                        match['had_megacreeps'],
-                        match['match_date']
-                    ]
-                elif attempt['format'] == 'records':
-                    payload = {'records': [match]}
-                elif attempt['format'] == 'batch':
-                    payload = [match]
-                else:
-                    payload = match
-                
-                response = requests.post(attempt['url'], headers=headers, json=payload)
-                
-                if response.status_code in [200, 201]:
-                    print(f"✅ Матч {match['match_id']} добавлен (формат: {attempt['format']})")
-                    break
-                else:
-                    print(f"⏳ Пробуем другой формат для матча {match['match_id']}...")
-            except Exception as e:
-                continue
-        else:
-            print(f"❌ Не удалось добавить матч {match['match_id']} ни в одном формате")
+    for test in test_cases:
+        print(f"\n📤 Тест: {test['name']}")
+        print(f"URL: {test['url']}")
+        print(f"Данные: {json.dumps(test['data'], ensure_ascii=False)[:200]}")
+        
+        try:
+            response = requests.post(test['url'], headers=headers, json=test['data'])
+            print(f"Статус: {response.status_code}")
+            if response.status_code in [200, 201]:
+                print("✅ УСПЕХ!")
+                try:
+                    debug_print("Ответ", response.json())
+                except:
+                    print("Ответ не в JSON")
+            else:
+                print(f"❌ Ошибка: {response.status_code}")
+                try:
+                    print(f"Текст ответа: {response.text[:200]}")
+                except:
+                    pass
+        except Exception as e:
+            print(f"❌ Исключение: {e}")
 
 def main():
-    print(f"🚀 Запуск парсера Dota 2: {datetime.datetime.now()}")
+    print(f"🚀 Запуск отладки: {datetime.datetime.now()}")
     
-    matches = get_pro_matches()
-    if not matches:
-        print("❌ Не удалось получить матчи")
-        return
+    # Сначала тестируем API
+    api_info = test_mws_api()
     
-    print(f"📊 Получено {len(matches)} матчей")
+    # Затем пробуем добавить тестовую запись
+    test_add_record()
     
-    processed_matches = []
-    for match in matches[:20]:
-        processed = process_match(match)
-        processed_matches.append(processed)
-        print(f"⚙️ Обработан матч {processed['match_id']}")
-    
-    append_to_mws_tables(processed_matches)
-    print("✅ Готово!")
+    print("\n✅ Отладка завершена!")
 
 if __name__ == "__main__":
     main()

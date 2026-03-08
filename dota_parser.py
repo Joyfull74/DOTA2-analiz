@@ -4,11 +4,15 @@ import datetime
 
 # ============= НАСТРОЙКИ =============
 MWS_TOKEN = os.environ.get('MWS_TOKEN')
-MWS_TABLE_ID = os.environ.get('MWS_TABLE_ID')
+MWS_TABLE_ID = "dstWj25HjQqwT4jmDC"  # ID из документации
+VIEW_ID = "viw3UUhw6Xy2w"            # ID представления
 # ======================================
 
-# API endpoint
-MWS_API_URL = "https://tables.mws.ru/api"
+# API endpoint из документации
+MWS_API_URL = "https://tables.mws.ru/fusion/v1"
+
+# Field ID для поля (из документации)
+FIELD_ID = "fldkN4EjwFeEP"
 
 def get_pro_matches():
     """Получает последние профессиональные матчи"""
@@ -21,8 +25,8 @@ def get_pro_matches():
         print(f"❌ Ошибка OpenDota: {e}")
         return []
 
-def process_match(match):
-    """Превращает матч в список значений в правильном порядке"""
+def process_match(match, index):
+    """Превращает матч в формат для MWS Tables"""
     
     # Проверка мегакрипов
     had_megacreeps = (match.get('barracks_status_radiant') == 0 or 
@@ -40,24 +44,34 @@ def process_match(match):
     else:
         match_date = ''
     
-    # ВОЗВРАЩАЕМ СПИСОК ЗНАЧЕНИЙ В ТОМ ПОРЯДКЕ, 
-    # В КОТОРОМ СОЗДАНЫ КОЛОНКИ В ТАБЛИЦЕ:
-    return [
-        str(match.get('match_id', '')),                    # 1. match_id
-        match.get('radiant_name') or 'Unknown',            # 2. radiant_team
-        match.get('dire_name') or 'Unknown',               # 3. dire_team
-        'Radiant' if match.get('radiant_win') else 'Dire', # 4. winner
-        f"{duration_min}:{duration_sec:02d}",              # 5. duration
-        f"{match.get('radiant_score', 0)} - {match.get('dire_score', 0)}", # 6. score
-        match.get('league_name') or 'No League',           # 7. league
-        'Yes' if had_megacreeps else 'No',                 # 8. had_megacreeps
-        match_date                                          # 9. match_date
+    # Формируем строку со ВСЕМИ значениями, разделенными специальным разделителем
+    # MWS Tables ожидает все поля в одном field ID
+    values = [
+        str(match.get('match_id', '')),
+        match.get('radiant_name') or 'Unknown',
+        match.get('dire_name') or 'Unknown',
+        'Radiant' if match.get('radiant_win') else 'Dire',
+        f"{duration_min}:{duration_sec:02d}",
+        f"{match.get('radiant_score', 0)} - {match.get('dire_score', 0)}",
+        match.get('league_name') or 'No League',
+        'Yes' if had_megacreeps else 'No',
+        match_date
     ]
+    
+    # Объединяем все значения через разделитель (например, " | ")
+    # Так MWS Tables поймет, где какое поле
+    combined_value = " | ".join(values)
+    
+    return {
+        "fields": {
+            FIELD_ID: combined_value
+        }
+    }
 
 def append_to_mws_tables(matches):
     """Добавляет матчи в MWS Tables"""
-    if not all([MWS_TOKEN, MWS_TABLE_ID]):
-        print("⚠️ MWS Tables не настроены")
+    if not MWS_TOKEN:
+        print("⚠️ MWS_TOKEN не настроен")
         return
     
     headers = {
@@ -65,24 +79,44 @@ def append_to_mws_tables(matches):
         'Content-Type': 'application/json'
     }
     
-    # Правильный endpoint (взят из твоего скриншота с панелью API)
-    endpoint = f"{MWS_API_URL}/tables/{MWS_TABLE_ID}/rows"
+    # Формируем URL как в документации
+    url = f"{MWS_API_URL}/datasets/{MWS_TABLE_ID}/records"
+    params = {
+        'viewId': VIEW_ID,
+        'fieldKey': 'id'
+    }
     
-    for match_list in matches:
-        # Отправляем как простой массив значений
-        payload = match_list
+    # Создаём records в правильном формате
+    records = []
+    for i, match in enumerate(matches):
+        record = {
+            "fields": {
+                FIELD_ID: match["fields"][FIELD_ID]
+            }
+        }
+        records.append(record)
+        print(f"📝 Подготовлен матч {i+1}: {match['fields'][FIELD_ID][:50]}...")
+    
+    # Финальный payload точно как в документации
+    payload = {
+        "records": records,
+        "fieldKey": "id"
+    }
+    
+    print(f"\n📤 Отправляем {len(records)} записей...")
+    
+    try:
+        response = requests.post(url, headers=headers, params=params, json=payload)
         
-        try:
-            response = requests.post(endpoint, headers=headers, json=payload)
+        if response.status_code in [200, 201]:
+            print(f"✅ УСПЕХ! Все {len(records)} записей добавлены")
+            print(f"Ответ: {response.text[:200]}")
+        else:
+            print(f"❌ Ошибка {response.status_code}")
+            print(f"Ответ: {response.text[:500]}")
             
-            if response.status_code in [200, 201]:
-                print(f"✅ Матч {match_list[0]} успешно добавлен!")
-            else:
-                print(f"❌ Ошибка {response.status_code} для матча {match_list[0]}")
-                print(f"Ответ: {response.text[:200]}")
-                
-        except Exception as e:
-            print(f"❌ Исключение для матча {match_list[0]}: {e}")
+    except Exception as e:
+        print(f"❌ Исключение: {e}")
 
 def main():
     print(f"🚀 Запуск парсера Dota 2: {datetime.datetime.now()}")
@@ -94,12 +128,12 @@ def main():
     
     print(f"📊 Получено {len(matches)} матчей")
     
-    # Берём первые 10 матчей для теста
+    # Берём первые 5 матчей для теста
     test_matches = []
-    for match in matches[:10]:
-        processed = process_match(match)
+    for i, match in enumerate(matches[:5]):
+        processed = process_match(match, i)
         test_matches.append(processed)
-        print(f"⚙️ Подготовлен матч {processed[0]}")
+        print(f"⚙️ Обработан матч {match.get('match_id')}")
     
     # Отправляем в MWS Tables
     append_to_mws_tables(test_matches)

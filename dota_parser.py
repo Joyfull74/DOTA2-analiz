@@ -3,10 +3,11 @@ import requests
 import datetime
 
 # ============= НАСТРОЙКИ =============
-MWS_TOKEN = os.environ.get('MWS_TOKEN')        # API токен из MWS Tables
-MWS_TABLE_ID = os.environ.get('MWS_TABLE_ID')  # ID вашей таблицы
+MWS_TOKEN = os.environ.get('MWS_TOKEN')
+MWS_TABLE_ID = os.environ.get('MWS_TABLE_ID')
 # ======================================
 
+# API endpoint для MWS Tables (уточни в документации!)
 MWS_API_URL = "https://tables.mws.ru/api/v1"
 
 def get_pro_matches():
@@ -23,24 +24,21 @@ def get_pro_matches():
 
 def process_match(match):
     """Обрабатывает один матч"""
-    # Проверяем мегакрипы (все казармы уничтожены)
     had_megacreeps = (match.get('barracks_status_radiant') == 0 or 
                      match.get('barracks_status_dire') == 0)
     
-    # Длительность
     duration_seconds = match.get('duration', 0)
     duration_min = duration_seconds // 60
     duration_sec = duration_seconds % 60
     
-    # Дата
     start_time = match.get('start_time')
     if start_time:
-        match_date = datetime.datetime.fromtimestamp(start_time).isoformat()
+        match_date = datetime.datetime.fromtimestamp(start_time).strftime('%Y-%m-%d %H:%M')
     else:
-        match_date = None
+        match_date = ''
     
     return {
-        'match_id': match.get('match_id'),
+        'match_id': str(match.get('match_id', '')),
         'radiant_team': match.get('radiant_name') or 'Unknown',
         'dire_team': match.get('dire_name') or 'Unknown',
         'winner': 'Radiant' if match.get('radiant_win') else 'Dire',
@@ -57,22 +55,42 @@ def get_existing_match_ids():
         return []
     
     headers = {'Authorization': f'Bearer {MWS_TOKEN}'}
-    url = f"{MWS_API_URL}/tables/{MWS_TABLE_ID}/rows"
     
-    try:
-        response = requests.get(url, headers=headers)
-        response.raise_for_status()
-        data = response.json()
-        
-        existing_ids = []
-        if isinstance(data, list):
-            for row in data:
-                if 'match_id' in row:
-                    existing_ids.append(str(row['match_id']))
-        return existing_ids
-    except Exception as e:
-        print(f"❌ Ошибка при получении существующих матчей: {e}")
-        return []
+    # Пробуем разные возможные endpoint'ы
+    possible_urls = [
+        f"{MWS_API_URL}/tables/{MWS_TABLE_ID}/rows",
+        f"{MWS_API_URL}/bases/{MWS_TABLE_ID}/rows",
+        f"{MWS_API_URL}/tables/{MWS_TABLE_ID}/records"
+    ]
+    
+    for url in possible_urls:
+        try:
+            response = requests.get(url, headers=headers)
+            if response.status_code == 200:
+                data = response.json()
+                existing_ids = []
+                
+                # Пробуем разные форматы ответа
+                if isinstance(data, list):
+                    for row in data:
+                        if isinstance(row, dict) and 'match_id' in row:
+                            existing_ids.append(str(row['match_id']))
+                elif isinstance(data, dict) and 'rows' in data:
+                    for row in data['rows']:
+                        if 'match_id' in row:
+                            existing_ids.append(str(row['match_id']))
+                elif isinstance(data, dict) and 'data' in data:
+                    for row in data['data']:
+                        if 'match_id' in row:
+                            existing_ids.append(str(row['match_id']))
+                
+                print(f"📋 Найдено {len(existing_ids)} существующих матчей")
+                return existing_ids
+        except:
+            continue
+    
+    print("⚠️ Не удалось получить существующие матчи, продолжаем без проверки дубликатов")
+    return []
 
 def append_to_mws_tables(matches):
     """Добавляет новые матчи в MWS Tables"""
@@ -92,14 +110,60 @@ def append_to_mws_tables(matches):
         'Content-Type': 'application/json'
     }
     
+    # Пробуем разные форматы отправки данных
+    urls_and_formats = [
+        {
+            'url': f"{MWS_API_URL}/tables/{MWS_TABLE_ID}/rows",
+            'format': 'list'
+        },
+        {
+            'url': f"{MWS_API_URL}/bases/{MWS_TABLE_ID}/rows",
+            'format': 'list'
+        },
+        {
+            'url': f"{MWS_API_URL}/tables/{MWS_TABLE_ID}/records",
+            'format': 'records'
+        },
+        {
+            'url': f"{MWS_API_URL}/tables/{MWS_TABLE_ID}/rows/batch",
+            'format': 'batch'
+        }
+    ]
+    
     for match in new_matches:
-        url = f"{MWS_API_URL}/tables/{MWS_TABLE_ID}/rows"
-        try:
-            response = requests.post(url, headers=headers, json=match)
-            response.raise_for_status()
-            print(f"✅ Матч {match['match_id']} добавлен")
-        except Exception as e:
-            print(f"❌ Ошибка при добавлении матча {match['match_id']}: {e}")
+        for attempt in urls_and_formats:
+            try:
+                if attempt['format'] == 'list':
+                    # Простой список значений в правильном порядке
+                    payload = [
+                        match['match_id'],
+                        match['radiant_team'],
+                        match['dire_team'],
+                        match['winner'],
+                        match['duration'],
+                        match['score'],
+                        match['league'],
+                        match['had_megacreeps'],
+                        match['match_date']
+                    ]
+                elif attempt['format'] == 'records':
+                    payload = {'records': [match]}
+                elif attempt['format'] == 'batch':
+                    payload = [match]
+                else:
+                    payload = match
+                
+                response = requests.post(attempt['url'], headers=headers, json=payload)
+                
+                if response.status_code in [200, 201]:
+                    print(f"✅ Матч {match['match_id']} добавлен (формат: {attempt['format']})")
+                    break
+                else:
+                    print(f"⏳ Пробуем другой формат для матча {match['match_id']}...")
+            except Exception as e:
+                continue
+        else:
+            print(f"❌ Не удалось добавить матч {match['match_id']} ни в одном формате")
 
 def main():
     print(f"🚀 Запуск парсера Dota 2: {datetime.datetime.now()}")
@@ -112,7 +176,7 @@ def main():
     print(f"📊 Получено {len(matches)} матчей")
     
     processed_matches = []
-    for match in matches[:20]:  # первые 20 матчей
+    for match in matches[:20]:
         processed = process_match(match)
         processed_matches.append(processed)
         print(f"⚙️ Обработан матч {processed['match_id']}")
